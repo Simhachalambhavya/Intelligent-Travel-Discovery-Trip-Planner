@@ -1,0 +1,6 @@
+{
+  "name": "TripWise AI - Intelligent Travel Discovery & Trip Planner",
+  "description": "Discover where to go based on your budget, travelers, and interests, and plan complete bookable itineraries with live weather, flights, hotels, and local experiences.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
