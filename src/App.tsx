@@ -15,6 +15,7 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { POPULAR_DESTINATIONS } from './data/destinations';
 import { Destination, TripPreferences, UserTripProfile, SavedTrip, GroupType, TravelStyle } from './types/travel';
 import { formatCurrency, convertFromINR } from './utils/currency';
+import { parsePromptClientFallback } from './utils/intentParser';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'explore' | 'plan' | 'saved' | 'profile'>('explore');
@@ -72,15 +73,18 @@ export default function App() {
   // Natural Language prompt analysis
   const handleConversationalPrompt = async (prompt: string) => {
     setIsAiGenerating(true);
+    let resolvedPrefs: TripPreferences;
+
     try {
       const res = await fetch('/api/gemini/parse-prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt }),
       });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const parsed = await res.json();
 
-      const newPrefs: TripPreferences = {
+      resolvedPrefs = {
         budget: parsed.budget || tripPreferences.budget,
         currency: parsed.currency || currency,
         durationDays: parsed.durationDays || tripPreferences.durationDays,
@@ -91,17 +95,17 @@ export default function App() {
         travelStyle: parsed.travelStyle || tripPreferences.travelStyle,
         interests: parsed.interests || tripPreferences.interests,
       };
-
-      setTripPreferences(newPrefs);
-      if (parsed.currency) setCurrency(parsed.currency);
-
-      // Now request tailored AI recommendations
-      await fetchAiRecommendations(newPrefs);
     } catch (err) {
-      console.error('Error parsing conversational prompt:', err);
-    } finally {
-      setIsAiGenerating(false);
+      console.warn('Using client-side conversational parser fallback:', err);
+      resolvedPrefs = parsePromptClientFallback(prompt, tripPreferences);
     }
+
+    setTripPreferences(resolvedPrefs);
+    if (resolvedPrefs.currency) setCurrency(resolvedPrefs.currency);
+
+    // Request tailored AI recommendations
+    await fetchAiRecommendations(resolvedPrefs);
+    setIsAiGenerating(false);
   };
 
   const fetchAiRecommendations = async (prefs: TripPreferences) => {
@@ -112,6 +116,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(prefs),
       });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = await res.json();
 
       if (data.destinations && data.destinations.length > 0) {
@@ -125,11 +130,17 @@ export default function App() {
         });
         setDestinations(ranked);
       }
+    } catch (err) {
+      console.warn('Using curated destination matching fallback:', err);
+      const ranked = [...POPULAR_DESTINATIONS].sort((a, b) => {
+        const matchA = a.travelStyleTags.some((t) => prefs.interests.includes(t)) ? 1 : 0;
+        const matchB = b.travelStyleTags.some((t) => prefs.interests.includes(t)) ? 1 : 0;
+        return matchB - matchA;
+      });
+      setDestinations(ranked);
+    } finally {
       setIsFinderModalOpen(false);
       setActiveTab('explore');
-    } catch (err) {
-      console.error('Recommend destinations error:', err);
-    } finally {
       setIsAiGenerating(false);
     }
   };
