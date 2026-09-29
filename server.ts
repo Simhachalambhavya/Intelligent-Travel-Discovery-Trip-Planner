@@ -253,7 +253,121 @@ IMPORTANT:
   }
 });
 
-// 3. AI Conversational Assistant & Itinerary modifier
+// 3. n8n AI Agent Webhook Proxy
+const N8N_TEST_WEBHOOK = 'https://bhavya-3004.app.n8n.cloud/webhook/tripwise-chat';
+const N8N_PROD_WEBHOOK = 'https://bhavya-3004.app.n8n.cloud/webhook/tripwise-chat';
+
+function extractN8nText(data: any): string {
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return extractN8nText(parsed);
+      }
+    } catch {
+      return data;
+    }
+    return data;
+  }
+  if (!data) return '';
+  if (Array.isArray(data) && data.length > 0) {
+    return extractN8nText(data[0]);
+  }
+  if (typeof data === 'object') {
+    if (typeof data.output === 'string') return data.output;
+    if (typeof data.text === 'string') return data.text;
+    if (typeof data.response === 'string') return data.response;
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data.reply === 'string') return data.reply;
+    if (typeof data.result === 'string') return data.result;
+    if (data.data) return extractN8nText(data.data);
+    for (const key of Object.keys(data)) {
+      if (typeof data[key] === 'string' && data[key].trim().length > 0) {
+        return data[key];
+      }
+    }
+  }
+  return typeof data === 'object' ? JSON.stringify(data) : String(data);
+}
+
+app.post('/api/n8n/chat', async (req: Request, res: Response) => {
+  const { message, sessionId = 'tripwise-user-session' } = req.body;
+
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  const payload = {
+    message,
+    sessionId: sessionId || 'tripwise-user-session',
+  };
+
+  try {
+    // 1. Try production webhook URL first
+    const prodRes = await fetch(N8N_PROD_WEBHOOK, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (prodRes.ok) {
+      const contentType = prodRes.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await prodRes.json()
+        : await prodRes.text();
+      const reply = extractN8nText(data);
+      if (reply) {
+        return res.json({ reply, success: true });
+      }
+    }
+
+    // 2. If production webhook returns 404, check test webhook in case canvas test execution is active
+    if (prodRes.status === 404) {
+      try {
+        const testRes = await fetch(N8N_TEST_WEBHOOK, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (testRes.ok) {
+          const contentType = testRes.headers.get('content-type') || '';
+          const testData = contentType.includes('application/json')
+            ? await testRes.json()
+            : await testRes.text();
+          const reply = extractN8nText(testData);
+          if (reply) {
+            return res.json({ reply, success: true });
+          }
+        }
+      } catch (testErr) {
+        console.warn('Test webhook fallback check failed:', testErr);
+      }
+
+      return res.json({
+        reply: "Your n8n AI Agent is connected, but the webhook is waiting for execution. In n8n, please switch the workflow toggle to 'Active' in the top-right corner (or click 'Execute workflow' on the canvas), then send your message again!",
+        success: false,
+      });
+    }
+
+    return res.json({
+      reply: "The n8n AI Agent returned an unexpected response. Please check your n8n workflow nodes and try again.",
+      success: false,
+    });
+  } catch (error) {
+    console.error('Error forwarding to n8n webhook:', error);
+    return res.json({
+      reply: "I'm having trouble connecting to the n8n AI Agent right now. Please verify your n8n workflow is running or click 'Execute workflow' in the n8n editor, then try again!",
+      success: false,
+    });
+  }
+});
+
+// 4. AI Conversational Assistant & Itinerary modifier
 app.post('/api/gemini/chat', async (req: Request, res: Response) => {
   const { message, context } = req.body;
 

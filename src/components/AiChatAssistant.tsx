@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, X, Send, Sparkles, Bot, User, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { Destination } from '../types/travel';
+import { sendChatMessageToN8n } from '../services/n8nService';
 
 interface Message {
   id: string;
@@ -68,37 +69,22 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/gemini/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          context: {
-            currentDestination: currentDestination?.name,
-            budget,
-            currency,
-            travelStyle: 'balanced',
-          },
-        }),
-      });
-
-      const data = await res.json();
-      const reply = data.reply || "I'm right here to help you customize your travel plans!";
+      const { reply } = await sendChatMessageToN8n(text, 'tripwise-user-session');
 
       const aiMsg: Message = {
         id: `ai-${Date.now()}`,
         sender: 'assistant',
-        text: reply,
+        text: reply || "I'm right here to help you customize your travel plans!",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
-      console.error('Chat error:', err);
+      console.error('n8n Chat error:', err);
       const errorMsg: Message = {
         id: `ai-${Date.now()}`,
         sender: 'assistant',
-        text: "I'm having a brief connection pause, but please ask again or try one of the prompt chips below!",
+        text: "I'm having trouble connecting to the n8n AI Agent right now. Please verify your n8n workflow is running or click 'Execute workflow' in the n8n editor, then try again!",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMsg]);
