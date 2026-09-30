@@ -90,8 +90,8 @@ export async function sendChatMessageToN8n(
         return { reply: data.reply, success: true };
       }
     }
-  } catch (err) {
-    console.warn('Backend proxy fetch error, attempting direct n8n webhook call:', err);
+  } catch (_err) {
+    // Proceed to direct n8n webhook call or domain fallback
   }
 
   // 2. Direct client-side POST to n8n production webhook if backend proxy is unreachable
@@ -125,8 +125,8 @@ export async function sendChatMessageToN8n(
         return { reply: verified, success: true };
       }
     }
-  } catch (error) {
-    console.error('Error contacting direct n8n webhook:', error);
+  } catch (_error) {
+    // Fall through to domain fallback
   }
 
   // 3. Resilient client-side domain fallback

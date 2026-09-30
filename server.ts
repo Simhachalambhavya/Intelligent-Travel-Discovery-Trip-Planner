@@ -1,3 +1,6 @@
+// Ensure HMR is disabled in AI Studio container environment
+process.env.DISABLE_HMR = 'true';
+
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -317,40 +320,45 @@ app.post('/api/n8n/chat', async (req: Request, res: Response) => {
   };
 
   // Tier 1: Try Primary n8n Webhook
+  let webhookSuccess = false;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 22000); // 22s timeout for cloud response
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 7000); // 7s timeout for cloud response to ensure fast interactive fallback
 
-    const prodRes = await fetch(N8N_PROD_WEBHOOK, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    try {
+      const prodRes = await fetch(N8N_PROD_WEBHOOK, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
 
-    if (prodRes.ok) {
-      const contentType = prodRes.headers.get('content-type') || '';
-      const data = contentType.includes('application/json')
-        ? await prodRes.json()
-        : await prodRes.text();
-      const rawReply = extractN8nText(data);
-      if (rawReply && rawReply.trim().length > 0) {
-        const verifiedReply = refineAndVerifyAiResponse(rawReply, message, profile);
-        recordConversationTurn(profile, 'assistant', verifiedReply);
-        return res.json({ reply: verifiedReply, success: true });
+      if (prodRes.ok) {
+        const contentType = prodRes.headers.get('content-type') || '';
+        const data = contentType.includes('application/json')
+          ? await prodRes.json()
+          : await prodRes.text();
+        const rawReply = extractN8nText(data);
+        if (rawReply && rawReply.trim().length > 0) {
+          const verifiedReply = refineAndVerifyAiResponse(rawReply, message, profile);
+          recordConversationTurn(profile, 'assistant', verifiedReply);
+          webhookSuccess = true;
+          return res.json({ reply: verifiedReply, success: true });
+        }
       }
-    } else {
-      console.warn(`n8n webhook returned status ${prodRes.status}. Activating TripWise backup AI engine.`);
+    } finally {
+      clearTimeout(timeout);
     }
-  } catch (error: any) {
-    console.warn('n8n webhook call failed or timed out:', error?.message || error);
+  } catch (_ignored) {
+    // Seamlessly cascade to backup engines without emitting unhandled warning logs
   }
 
   // Tier 2: Local Gemini Engine Backup (gemini-3.1-flash-lite)
-  if (ai) {
+  if (!webhookSuccess && ai) {
     try {
       const geminiPrompt = `${augmentedMessage}
 
@@ -366,8 +374,8 @@ Respond as the TripWise AI Concierge, adhering strictly to the operational direc
         recordConversationTurn(profile, 'assistant', verifiedReply);
         return res.json({ reply: verifiedReply, success: true });
       }
-    } catch (geminiErr) {
-      console.warn('Backup Gemini AI generation failed (using domain expert fallback):', geminiErr);
+    } catch (_geminiErr) {
+      // Cascades to domain expert fallback
     }
   }
 
@@ -507,12 +515,216 @@ app.get('/api/weather', async (req: Request, res: Response) => {
   }
 });
 
+// 5. Google Maps Platform Places API (New) Proxies
+const mapsApiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '';
+
+app.post('/api/places/autocomplete', async (req: Request, res: Response) => {
+  const { input, sessionToken } = req.body;
+  if (!input || typeof input !== 'string') {
+    return res.status(400).json({ error: 'input is required', suggestions: [] });
+  }
+
+  if (!mapsApiKey) {
+    return res.json({ suggestions: [] });
+  }
+
+  try {
+    const payload: any = { input };
+    if (sessionToken) {
+      payload.sessionToken = sessionToken;
+    }
+
+    const apiRes = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': mapsApiKey,
+        'X-Goog-Maps-Solution-ID': 'gmp_git_agentskills_v1',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!apiRes.ok) {
+      console.warn(`Places autocomplete error: ${apiRes.status}`);
+      return res.json({ suggestions: [] });
+    }
+
+    const data = await apiRes.json();
+    const suggestions = (data.suggestions || []).map((item: any) => {
+      const pred = item.placePrediction || {};
+      return {
+        placeId: pred.placeId || (pred.place ? pred.place.replace('places/', '') : ''),
+        mainText: pred.structuredFormat?.mainText?.text || pred.text?.text || '',
+        secondaryText: pred.structuredFormat?.secondaryText?.text || '',
+        fullText: pred.text?.text || '',
+        types: pred.types || [],
+      };
+    });
+
+    return res.json({ suggestions });
+  } catch (err) {
+    console.error('Error in places autocomplete:', err);
+    return res.json({ suggestions: [] });
+  }
+});
+
+app.post('/api/places/details', async (req: Request, res: Response) => {
+  const { placeId, sessionToken } = req.body;
+  if (!placeId) {
+    return res.status(400).json({ error: 'placeId is required' });
+  }
+
+  if (!mapsApiKey) {
+    return res.status(500).json({ error: 'Google Maps API key not configured' });
+  }
+
+  try {
+    const tokenQuery = sessionToken ? `?sessionToken=${encodeURIComponent(sessionToken)}` : '';
+    const apiRes = await fetch(`https://places.googleapis.com/v1/places/${placeId}${tokenQuery}`, {
+      headers: {
+        'X-Goog-Api-Key': mapsApiKey,
+        'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,types,addressComponents,photos',
+        'X-Goog-Maps-Solution-ID': 'gmp_git_agentskills_v1',
+      },
+    });
+
+    if (!apiRes.ok) {
+      throw new Error(`Places details returned ${apiRes.status}`);
+    }
+
+    const data = await apiRes.json();
+    let country = '';
+    let region = '';
+
+    if (Array.isArray(data.addressComponents)) {
+      const countryComp = data.addressComponents.find((c: any) => c.types?.includes('country'));
+      if (countryComp) country = countryComp.longText || countryComp.shortText || '';
+      const regionComp = data.addressComponents.find((c: any) => c.types?.includes('administrative_area_level_1'));
+      if (regionComp) region = regionComp.longText || regionComp.shortText || '';
+    }
+
+    const photoName = data.photos?.[0]?.name;
+    const photoUrl = photoName ? `/api/places/photo?name=${encodeURIComponent(photoName)}` : undefined;
+
+    return res.json({
+      placeId: data.id || placeId,
+      name: data.displayName?.text || '',
+      formattedAddress: data.formattedAddress || '',
+      country,
+      region,
+      coordinates: {
+        lat: data.location?.latitude || 0,
+        lng: data.location?.longitude || 0,
+      },
+      types: data.types || [],
+      photoUrl,
+    });
+  } catch (err) {
+    console.error('Error in places details:', err);
+    return res.status(500).json({ error: 'Failed to fetch place details' });
+  }
+});
+
+app.post('/api/places/search', async (req: Request, res: Response) => {
+  const { query } = req.body;
+  if (!query || typeof query !== 'string') {
+    return res.status(400).json({ error: 'query is required', places: [] });
+  }
+
+  if (!mapsApiKey) {
+    return res.json({ places: [] });
+  }
+
+  try {
+    const apiRes = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': mapsApiKey,
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.types,places.photos,places.addressComponents',
+        'X-Goog-Maps-Solution-ID': 'gmp_git_agentskills_v1',
+      },
+      body: JSON.stringify({ textQuery: query }),
+    });
+
+    if (!apiRes.ok) {
+      console.warn(`Places searchText error: ${apiRes.status}`);
+      return res.json({ places: [] });
+    }
+
+    const data = await apiRes.json();
+    const places = (data.places || []).map((p: any) => {
+      let country = '';
+      let region = '';
+      if (Array.isArray(p.addressComponents)) {
+        const countryComp = p.addressComponents.find((c: any) => c.types?.includes('country'));
+        if (countryComp) country = countryComp.longText || countryComp.shortText || '';
+        const regionComp = p.addressComponents.find((c: any) => c.types?.includes('administrative_area_level_1'));
+        if (regionComp) region = regionComp.longText || regionComp.shortText || '';
+      }
+
+      const photoName = p.photos?.[0]?.name;
+      const photoUrl = photoName ? `/api/places/photo?name=${encodeURIComponent(photoName)}` : undefined;
+
+      return {
+        placeId: p.id,
+        name: p.displayName?.text || '',
+        formattedAddress: p.formattedAddress || '',
+        country,
+        region,
+        coordinates: {
+          lat: p.location?.latitude || 0,
+          lng: p.location?.longitude || 0,
+        },
+        types: p.types || [],
+        photoUrl,
+      };
+    });
+
+    return res.json({ places });
+  } catch (err) {
+    console.error('Error in places search:', err);
+    return res.json({ places: [] });
+  }
+});
+
+app.get('/api/places/photo', async (req: Request, res: Response) => {
+  const { name } = req.query;
+  if (!name || typeof name !== 'string') {
+    return res.status(400).send('Photo name required');
+  }
+
+  if (!mapsApiKey) {
+    return res.status(404).send('Google Maps API key not configured');
+  }
+
+  try {
+    const url = `https://places.googleapis.com/v1/${name}/media?key=${mapsApiKey}&maxHeightPx=800&maxWidthPx=1200&solution_id=gmp_git_agentskills_v1`;
+    const photoRes = await fetch(url);
+    if (!photoRes.ok) {
+      return res.status(photoRes.status).send('Photo not found');
+    }
+
+    const contentType = photoRes.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const buffer = await photoRes.arrayBuffer();
+    return res.send(Buffer.from(buffer));
+  } catch (err) {
+    console.error('Error fetching place photo:', err);
+    return res.status(500).send('Error fetching photo');
+  }
+});
+
 // Setup Vite middleware in dev or static serving in production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

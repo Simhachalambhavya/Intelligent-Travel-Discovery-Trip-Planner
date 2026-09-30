@@ -24,6 +24,9 @@ export interface Destination {
   name: string;
   country: string;
   region?: string;
+  placeId?: string;
+  formattedAddress?: string;
+  types?: string[];
   tagline: string;
   description: string;
   image: string;

@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Search, Sparkles, Compass, ArrowRight, MapPin, Users, Heart, Shield, HelpCircle } from 'lucide-react';
-import { GroupType } from '../types/travel';
+import { Destination, GroupType } from '../types/travel';
+import { DestinationSearchInput } from './DestinationSearchInput';
 
 interface HeroSectionProps {
   onSearch: (query: string) => void;
+  onSelectDestination?: (dest: Destination) => void;
   onConversationalSubmit: (prompt: string) => void;
   onOpenDiscoveryWizard: () => void;
   onSelectGroupType: (type: GroupType) => void;
@@ -12,6 +14,7 @@ interface HeroSectionProps {
 
 export const HeroSection: React.FC<HeroSectionProps> = ({
   onSearch,
+  onSelectDestination,
   onConversationalSubmit,
   onOpenDiscoveryWizard,
   onSelectGroupType,
@@ -137,28 +140,20 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <span>I'm not sure — help me choose a destination</span>
           </button>
 
-          {/* Option B: Direct Search Input */}
-          <form
-            onSubmit={handleDirectSearch}
-            className="w-full md:w-auto flex-1 max-w-md relative flex items-center bg-white/10 border border-white/20 rounded-xl px-3 py-1.5 focus-within:border-amber-400 transition-colors"
-          >
-            <Search className="w-4 h-4 text-slate-300 mr-2 shrink-0" />
-            <input
-              type="text"
-              value={directSearchQuery}
-              onChange={(e) => setDirectSearchQuery(e.target.value)}
-              placeholder="Or search anywhere in the world (e.g. Rio, Kyoto, Paris)..."
-              className="w-full bg-transparent text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none"
+          {/* Option B: Worldwide Dynamic Destination Search Input */}
+          <div className="w-full md:w-auto flex-1 max-w-md">
+            <DestinationSearchInput
+              variant="hero"
+              placeholder="Or search anywhere in the world (e.g. Tokyo, Mount Fuji, Paris)..."
+              onSelectDestination={(dest) => {
+                if (onSelectDestination) {
+                  onSelectDestination(dest);
+                } else {
+                  onSearch(dest.name);
+                }
+              }}
             />
-            {directSearchQuery && (
-              <button
-                type="submit"
-                className="text-xs font-semibold text-amber-300 hover:text-amber-200 ml-2"
-              >
-                Go
-              </button>
-            )}
-          </form>
+          </div>
         </div>
 
         {/* Travel Style Toggles */}

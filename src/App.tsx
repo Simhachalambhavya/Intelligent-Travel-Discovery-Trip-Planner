@@ -12,6 +12,8 @@ import { AiChatAssistant } from './components/AiChatAssistant';
 import { SavedTripsView } from './components/SavedTripsView';
 import { UserProfileModal } from './components/UserProfileModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { DestinationSearchInput } from './components/DestinationSearchInput';
+import { buildDestinationFromPlace } from './utils/destinationBuilder';
 import { POPULAR_DESTINATIONS } from './data/destinations';
 import { Destination, TripPreferences, UserTripProfile, SavedTrip, GroupType, TravelStyle } from './types/travel';
 import { formatCurrency, convertFromINR } from './utils/currency';
@@ -156,48 +158,62 @@ export default function App() {
     }
   };
 
-  // Direct Search
-  const handleDirectSearch = (query: string) => {
-    const q = query.toLowerCase().trim();
+  // Handle selecting any destination worldwide
+  const handleSelectGlobalDestination = (dest: Destination) => {
+    setDestinations((prev) => {
+      const exists = prev.some((d) => d.id === dest.id || d.name.toLowerCase() === dest.name.toLowerCase());
+      return exists ? prev : [dest, ...prev];
+    });
+    setSelectedDestination(dest);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Direct Worldwide Search via Places API (New)
+  const handleDirectSearch = async (query: string) => {
+    const q = query.trim();
+    if (!q) return;
+
+    try {
+      const res = await fetch('/api/places/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.places && data.places.length > 0) {
+          const dest = buildDestinationFromPlace(data.places[0]);
+          handleSelectGlobalDestination(dest);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Dynamic places search error, using client resolution:', err);
+    }
+
+    // Match in existing list or create dynamic destination
+    const lowerQ = q.toLowerCase();
     const matched = POPULAR_DESTINATIONS.filter(
       (d) =>
-        d.name.toLowerCase().includes(q) ||
-        d.country.toLowerCase().includes(q) ||
-        d.travelStyleTags.some((t) => t.toLowerCase().includes(q)) ||
-        d.mainAttractions.some((a) => a.toLowerCase().includes(q))
+        d.name.toLowerCase().includes(lowerQ) ||
+        d.country.toLowerCase().includes(lowerQ) ||
+        d.travelStyleTags.some((t) => t.toLowerCase().includes(lowerQ)) ||
+        d.mainAttractions.some((a) => a.toLowerCase().includes(lowerQ))
     );
 
     if (matched.length > 0) {
-      setDestinations(matched);
-      setSelectedDestination(matched[0]);
+      handleSelectGlobalDestination(matched[0]);
     } else {
-      // Create on the fly destination entry
-      const capitalQ = query.charAt(0).toUpperCase() + query.slice(1);
-      const customDest: Destination = {
-        id: q.replace(/\s+/g, '-'),
-        name: capitalQ,
-        country: 'Featured Global Destination',
-        tagline: `Discover the unforgettable culture and wonders of ${capitalQ}`,
-        description: `Explore historic landmarks, scenic landscapes, and authentic local cuisine in ${capitalQ}.`,
-        image: 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1200&q=80',
-        estimatedCost: {
-          min: 65000,
-          max: 95000,
-          currency: 'INR',
-          breakdown: { flights: 30000, hotel: 25000, food: 15000, transport: 8000, activities: 10000 },
-        },
-        recommendedDays: 5,
-        weatherSummary: 'Pleasant travel season with mild daylight temperatures.',
-        bestMonths: ['Mar', 'Apr', 'May', 'Sep', 'Oct'],
-        mainAttractions: [`${capitalQ} Old Town`, `${capitalQ} Iconic Landmark`, `${capitalQ} Panorama`],
-        foodSpecialties: ['Regional Artisan Stew', 'Fresh Local Bread', 'Traditional Dessert'],
-        travelStyleTags: ['Culture', 'History', 'Food', 'Photography'],
-        matchScore: 92,
-        whyMatchExplanation: `${capitalQ} offers rich exploration aligned with your budget and travel duration.`,
+      const fallbackPlace = {
+        placeId: `dest-${Date.now()}`,
+        name: q.charAt(0).toUpperCase() + q.slice(1),
+        formattedAddress: q,
         coordinates: { lat: 25.0, lng: 55.0 },
+        types: ['locality', 'tourist_attraction'],
       };
-      setDestinations([customDest, ...POPULAR_DESTINATIONS]);
-      setSelectedDestination(customDest);
+      const customDest = buildDestinationFromPlace(fallbackPlace);
+      handleSelectGlobalDestination(customDest);
     }
   };
 
@@ -262,6 +278,7 @@ export default function App() {
             durationDays={tripPreferences.durationDays}
             travelStyle={tripPreferences.travelStyle}
             onBack={() => setSelectedDestination(null)}
+            onSelectDestination={handleSelectGlobalDestination}
             onSaveTrip={handleSaveTrip}
             isSaved={savedDestinations.includes(selectedDestination.id)}
             onOpenAiChat={handleOpenAiChat}
@@ -310,6 +327,7 @@ export default function App() {
             {/* Hero Section with Conversational Search */}
             <HeroSection
               onSearch={handleDirectSearch}
+              onSelectDestination={handleSelectGlobalDestination}
               onConversationalSubmit={handleConversationalPrompt}
               onOpenDiscoveryWizard={() => setIsFinderModalOpen(true)}
               onSelectGroupType={(type: GroupType) => {
@@ -481,14 +499,22 @@ export default function App() {
                   </p>
                 </div>
 
-                {selectedInterestFilter && (
-                  <button
-                    onClick={() => setSelectedInterestFilter(null)}
-                    className="text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition-colors"
-                  >
-                    Clear Filter ({selectedInterestFilter})
-                  </button>
-                )}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <DestinationSearchInput
+                    variant="default"
+                    placeholder="Search any destination worldwide (e.g. Mount Fuji, Seoul, Paris)..."
+                    onSelectDestination={handleSelectGlobalDestination}
+                    className="w-full sm:w-80"
+                  />
+                  {selectedInterestFilter && (
+                    <button
+                      onClick={() => setSelectedInterestFilter(null)}
+                      className="text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-2 rounded-xl hover:bg-amber-100 transition-colors whitespace-nowrap self-start sm:self-auto border border-amber-200/50"
+                    >
+                      Clear Filter ({selectedInterestFilter})
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Destination Cards */}

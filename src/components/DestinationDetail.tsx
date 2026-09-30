@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft, Heart, Sparkles, MapPin, Calendar, Sun, Plane, Train, Hotel as HotelIcon,
   Utensils, Navigation, ExternalLink, ShieldCheck, Check, Clock, Users, Star,
-  Compass, Share2, Info, ChevronRight, Bookmark
+  Compass, Share2, Info, ChevronRight, Bookmark, Search, X
 } from 'lucide-react';
 import { Destination, Attraction, Hotel, Restaurant, TourExperience, TransportOption, FlightOption, TrainOption, DayItinerary, WeatherData, TravelStyle } from '../types/travel';
 import { WeatherWidget } from './WeatherWidget';
 import { AttractionModal } from './AttractionModal';
 import { BudgetCalculator } from './BudgetCalculator';
 import { ItineraryView } from './ItineraryView';
+import { DestinationSearchInput } from './DestinationSearchInput';
 import { formatCurrency, convertFromINR } from '../utils/currency';
 import { getOrCreateDestinationDetails } from '../data/destinations';
 
@@ -19,6 +20,7 @@ interface DestinationDetailProps {
   durationDays: number;
   travelStyle: TravelStyle;
   onBack: () => void;
+  onSelectDestination?: (dest: Destination) => void;
   onSaveTrip: (tripData: any) => void;
   isSaved?: boolean;
   onOpenAiChat: (initialMessage?: string) => void;
@@ -31,6 +33,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
   durationDays,
   travelStyle,
   onBack,
+  onSelectDestination,
   onSaveTrip,
   isSaved = false,
   onOpenAiChat,
@@ -42,6 +45,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
   const [currentStyle, setCurrentStyle] = useState<TravelStyle>(travelStyle);
   const [hotelFilter, setHotelFilter] = useState<'all' | 'budget' | 'luxury'>('all');
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
+  const [isChangeModalOpen, setIsChangeModalOpen] = useState(false);
 
   const details = getOrCreateDestinationDetails(destination.id, destination.name, destination.country);
 
@@ -130,13 +134,25 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
       {/* Top Floating Back & Action Bar */}
       <div className="sticky top-16 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
-          <button
-            onClick={onBack}
-            className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to Destinations</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
+            </button>
+
+            <span className="text-slate-300">|</span>
+
+            <button
+              onClick={() => setIsChangeModalOpen(true)}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors border border-amber-200/60"
+            >
+              <Compass className="w-3.5 h-3.5 text-amber-600" />
+              <span>Change Destination</span>
+            </button>
+          </div>
 
           {/* Sub-tab Navigation */}
           <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-slate-600">
@@ -809,6 +825,44 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
         onClose={() => setSelectedAttraction(null)}
         currency={currency}
       />
+
+      {/* Change Destination Modal */}
+      {isChangeModalOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-100 p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Compass className="w-5 h-5 text-amber-600" />
+                <h3 className="text-base font-bold text-slate-900 font-display">
+                  Change Destination
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsChangeModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 flex items-center justify-center transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Search for any city, country, landmark, or point of interest worldwide:
+            </p>
+
+            <DestinationSearchInput
+              variant="default"
+              autoFocus
+              placeholder="e.g. Mount Fuji, Paris, Seoul, Visakhapatnam..."
+              onSelectDestination={(newDest) => {
+                setIsChangeModalOpen(false);
+                if (onSelectDestination) {
+                  onSelectDestination(newDest);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

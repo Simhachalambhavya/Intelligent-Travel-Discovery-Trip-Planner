@@ -53,6 +53,25 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastSentPromptRef = useRef<string>('');
+  const prevDestRef = useRef<string | undefined>(currentDestination?.name);
+
+  useEffect(() => {
+    if (currentDestination && currentDestination.name !== prevDestRef.current) {
+      prevDestRef.current = currentDestination.name;
+      const destLabel = currentDestination.country
+        ? `${currentDestination.name}, ${currentDestination.country}`
+        : currentDestination.name;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `dest-change-${Date.now()}`,
+          sender: 'assistant',
+          text: `Destination updated to **${destLabel}**! Ask me to plan a custom day-by-day itinerary, recommend hotels, or share local tips here.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    }
+  }, [currentDestination]);
 
   useEffect(() => {
     if (initialPrompt && isOpen && lastSentPromptRef.current !== initialPrompt) {
@@ -81,8 +100,14 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
     setIsLoading(true);
 
     try {
+      const destLabel = currentDestination
+        ? currentDestination.country
+          ? `${currentDestination.name}, ${currentDestination.country}`
+          : currentDestination.name
+        : undefined;
+
       const context = {
-        destination: currentDestination?.name,
+        destination: destLabel,
         budget,
         currency,
       };
