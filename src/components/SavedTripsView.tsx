@@ -18,6 +18,17 @@ export const SavedTripsView: React.FC<SavedTripsViewProps> = ({
   onDeleteTrip,
   onOpenPlanModal,
 }) => {
+  const handleExportTrip = (e: React.MouseEvent, trip: SavedTrip) => {
+    e.stopPropagation();
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(trip, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `${trip.destinationName.toLowerCase()}-tripwise-itinerary.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
   if (savedTrips.length === 0) {
     return (
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-16 text-center">
@@ -121,13 +132,21 @@ export const SavedTripsView: React.FC<SavedTripsViewProps> = ({
               </div>
             </div>
 
-            <div className="p-5 pt-0 border-t border-slate-100 flex items-center justify-between gap-3 mt-2">
+            <div className="p-5 pt-0 border-t border-slate-100 flex items-center justify-between gap-2.5 mt-2">
               <button
                 onClick={() => onSelectTrip(trip)}
                 className="flex-1 py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
               >
                 <span>View Full Itinerary</span>
                 <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={(e) => handleExportTrip(e, trip)}
+                className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors"
+                title="Download itinerary JSON"
+                aria-label="Download itinerary JSON"
+              >
+                <Download className="w-4 h-4" />
               </button>
             </div>
           </div>

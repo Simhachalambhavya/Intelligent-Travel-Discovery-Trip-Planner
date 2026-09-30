@@ -108,8 +108,19 @@ export default function App() {
     setIsAiGenerating(false);
   };
 
+  const handleTabChange = (tab: 'explore' | 'plan' | 'saved' | 'profile') => {
+    setSelectedDestination(null);
+    if (tab === 'plan') {
+      setIsFinderModalOpen(true);
+    } else {
+      setActiveTab(tab);
+    }
+  };
+
   const fetchAiRecommendations = async (prefs: TripPreferences) => {
     setIsAiGenerating(true);
+    setTripPreferences(prefs);
+    if (prefs.currency) setCurrency(prefs.currency);
     try {
       const res = await fetch('/api/gemini/recommend-destinations', {
         method: 'POST',
@@ -234,10 +245,7 @@ export default function App() {
       {/* Top Bar Contract (1 Row, 3 Zones) */}
       <Navbar
         activeTab={activeTab}
-        setActiveTab={(tab) => {
-          setSelectedDestination(null);
-          setActiveTab(tab);
-        }}
+        setActiveTab={handleTabChange}
         currency={currency}
         setCurrency={setCurrency}
         onOpenPlanModal={() => setIsFinderModalOpen(true)}
@@ -548,10 +556,7 @@ export default function App() {
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav
         activeTab={activeTab}
-        setActiveTab={(t) => {
-          setSelectedDestination(null);
-          setActiveTab(t);
-        }}
+        setActiveTab={handleTabChange}
         onOpenAiChat={() => setIsAiChatOpen(true)}
         savedCount={savedTrips.length}
       />

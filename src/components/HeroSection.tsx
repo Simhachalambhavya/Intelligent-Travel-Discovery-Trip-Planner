@@ -51,6 +51,9 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           alt="Breathtaking scenic travel adventure"
           referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center transform scale-105 transition-transform duration-1000 ease-out"
+          onError={(e) => {
+            e.currentTarget.src = 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=1600&q=80';
+          }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/75 to-slate-900/40" />
       </div>

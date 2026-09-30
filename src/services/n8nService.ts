@@ -3,8 +3,16 @@
  * Production Webhook URL: https://bhavya-3004.app.n8n.cloud/webhook/tripwise-chat
  */
 
+import {
+  getOrCreateSessionProfile,
+  updateSessionFromMessage,
+  recordConversationTurn,
+  buildN8nAugmentedMessage,
+  refineAndVerifyAiResponse,
+  generateDomainFallbackResponse,
+} from './tripwiseAiCore';
+
 const N8N_PRODUCTION_WEBHOOK_URL = 'https://bhavya-3004.app.n8n.cloud/webhook/tripwise-chat';
-const N8N_TEST_WEBHOOK_URL = 'https://bhavya-3004.app.n8n.cloud/webhook/tripwise-chat';
 export const DEFAULT_SESSION_ID = 'tripwise-user-session';
 
 export function extractN8nResponseText(data: any): string {
@@ -42,22 +50,30 @@ export function extractN8nResponseText(data: any): string {
 }
 
 /**
- * Sends user message to the n8n AI Agent webhook in the exact requested format:
- * {
- *   "message": "USER_MESSAGE",
- *   "sessionId": "tripwise-user-session"
- * }
+ * Sends user message to the n8n AI Agent webhook with TripWise verification & session context:
  */
 export async function sendChatMessageToN8n(
   message: string,
-  sessionId: string = DEFAULT_SESSION_ID
+  sessionId: string = DEFAULT_SESSION_ID,
+  context?: {
+    destination?: string;
+    budget?: number;
+    currency?: string;
+    travelers?: any;
+    interests?: string[];
+  }
 ): Promise<{ reply: string; success: boolean }> {
+  const profile = getOrCreateSessionProfile(sessionId, context);
+  updateSessionFromMessage(profile, message);
+  recordConversationTurn(profile, 'user', message);
+
   const payload = {
     message,
     sessionId,
+    context,
   };
 
-  // 1. Try our backend proxy route first (avoids browser CORS issues and handles workflow states)
+  // 1. Try our backend proxy route first (enforces multi-tier resilience, verification guardrails, and avoids CORS)
   try {
     const serverRes = await fetch('/api/n8n/chat', {
       method: 'POST',
@@ -70,6 +86,7 @@ export async function sendChatMessageToN8n(
     if (serverRes.ok) {
       const data = await serverRes.json();
       if (data && data.reply) {
+        recordConversationTurn(profile, 'assistant', data.reply);
         return { reply: data.reply, success: true };
       }
     }
@@ -77,14 +94,20 @@ export async function sendChatMessageToN8n(
     console.warn('Backend proxy fetch error, attempting direct n8n webhook call:', err);
   }
 
-  // 2. Direct client-side POST to n8n production webhook
+  // 2. Direct client-side POST to n8n production webhook if backend proxy is unreachable
   try {
+    const augmentedMessage = buildN8nAugmentedMessage(message, profile);
+    const directPayload = {
+      message: augmentedMessage,
+      sessionId,
+    };
+
     const res = await fetch(N8N_PRODUCTION_WEBHOOK_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(directPayload),
     });
 
     if (res.ok) {
@@ -95,47 +118,22 @@ export async function sendChatMessageToN8n(
       } else {
         data = await res.text();
       }
-      const text = extractN8nResponseText(data);
-      if (text) {
-        return { reply: text, success: true };
+      const rawText = extractN8nResponseText(data);
+      if (rawText && rawText.trim().length > 0) {
+        const verified = refineAndVerifyAiResponse(rawText, message, profile);
+        recordConversationTurn(profile, 'assistant', verified);
+        return { reply: verified, success: true };
       }
-    } else if (res.status === 404) {
-      // If production URL returns 404, check test webhook in case workflow is running in test mode
-      try {
-        const testRes = await fetch(N8N_TEST_WEBHOOK_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (testRes.ok) {
-          const contentType = testRes.headers.get('content-type') || '';
-          const testData = contentType.includes('application/json')
-            ? await testRes.json()
-            : await testRes.text();
-          const text = extractN8nResponseText(testData);
-          if (text) {
-            return { reply: text, success: true };
-          }
-        }
-      } catch (testErr) {
-        console.warn('Test webhook fallback check failed:', testErr);
-      }
-
-      return {
-        reply: "Your n8n AI Agent is connected, but the webhook is waiting for execution. In n8n, please switch the workflow toggle to 'Active' in the top-right corner (or click 'Execute workflow' on the canvas), then send your message again!",
-        success: false,
-      };
     }
   } catch (error) {
-    console.error('Error contacting n8n webhook:', error);
+    console.error('Error contacting direct n8n webhook:', error);
   }
 
-  // Friendly error message fallback
+  // 3. Resilient client-side domain fallback
+  const fallback = generateDomainFallbackResponse(message, profile);
+  recordConversationTurn(profile, 'assistant', fallback);
   return {
-    reply: "I'm having trouble connecting to the n8n AI Agent right now. Please verify your n8n workflow is running or click 'Execute workflow' in the n8n editor, then try again!",
-    success: false,
+    reply: fallback,
+    success: true,
   };
 }

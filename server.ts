@@ -3,6 +3,14 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
+import {
+  getOrCreateSessionProfile,
+  updateSessionFromMessage,
+  recordConversationTurn,
+  buildN8nAugmentedMessage,
+  refineAndVerifyAiResponse,
+  generateDomainFallbackResponse,
+} from './src/services/tripwiseAiCore.ts';
 
 dotenv.config();
 
@@ -48,7 +56,7 @@ app.post('/api/gemini/parse-prompt', async (req: Request, res: Response) => {
     else if (text.includes('₹') || text.toLowerCase().includes('inr') || text.toLowerCase().includes('rupee')) currency = 'INR';
 
     // Budget check
-    const budgetMatch = text.match(/(?:₹|\$|€|£|rs\.?|inr|usd)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]+)?|\d+)\s*(k|lakh|lakhs|thousand)?/i);
+    const budgetMatch = text.match(/(?:₹|\$|€|£|rs\.?|inr|usd)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(k|lakh|lakhs|thousand)?/i);
     if (budgetMatch) {
       let num = parseFloat(budgetMatch[1].replace(/,/g, ''));
       const unit = (budgetMatch[2] || '').toLowerCase();
@@ -136,7 +144,7 @@ app.post('/api/gemini/parse-prompt', async (req: Request, res: Response) => {
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-3.1-flash-lite',
       contents: `Extract travel parameters from this user query into a clean JSON object.
 Query: "${prompt}"
 
@@ -238,7 +246,7 @@ IMPORTANT:
 ]`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-3.1-flash-lite',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -248,13 +256,12 @@ IMPORTANT:
     const destinations = JSON.parse(response.text || '[]');
     return res.json({ destinations });
   } catch (err) {
-    console.error('Gemini recommend destinations error:', err);
-    return res.status(500).json({ error: 'Failed to generate recommendations' });
+    console.warn('Gemini recommend destinations error (using curated catalog fallback):', err);
+    return res.json({ destinations: [], fallback: true });
   }
 });
 
-// 3. n8n AI Agent Webhook Proxy
-const N8N_TEST_WEBHOOK = 'https://bhavya-3004.app.n8n.cloud/webhook/tripwise-chat';
+// 3. n8n AI Agent Webhook Proxy with Multi-Tier Resilience & Verification Guardrails
 const N8N_PROD_WEBHOOK = 'https://bhavya-3004.app.n8n.cloud/webhook/tripwise-chat';
 
 function extractN8nText(data: any): string {
@@ -291,134 +298,119 @@ function extractN8nText(data: any): string {
 }
 
 app.post('/api/n8n/chat', async (req: Request, res: Response) => {
-  const { message, sessionId = 'tripwise-user-session' } = req.body;
+  const { message, sessionId = 'tripwise-user-session', context } = req.body;
 
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Message is required' });
   }
 
+  // 1. Maintain session memory across turns (destination, budget, travelers, interests, history)
+  const profile = getOrCreateSessionProfile(sessionId, context);
+  updateSessionFromMessage(profile, message);
+  recordConversationTurn(profile, 'user', message);
+
+  // 2. Build augmented prompt incorporating TripWise truthfulness & verification directives
+  const augmentedMessage = buildN8nAugmentedMessage(message, profile);
   const payload = {
-    message,
-    sessionId: sessionId || 'tripwise-user-session',
+    message: augmentedMessage,
+    sessionId: profile.sessionId,
   };
 
+  // Tier 1: Try Primary n8n Webhook
   try {
-    // 1. Try production webhook URL first
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 22000); // 22s timeout for cloud response
+
     const prodRes = await fetch(N8N_PROD_WEBHOOK, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (prodRes.ok) {
       const contentType = prodRes.headers.get('content-type') || '';
       const data = contentType.includes('application/json')
         ? await prodRes.json()
         : await prodRes.text();
-      const reply = extractN8nText(data);
-      if (reply) {
-        return res.json({ reply, success: true });
+      const rawReply = extractN8nText(data);
+      if (rawReply && rawReply.trim().length > 0) {
+        const verifiedReply = refineAndVerifyAiResponse(rawReply, message, profile);
+        recordConversationTurn(profile, 'assistant', verifiedReply);
+        return res.json({ reply: verifiedReply, success: true });
       }
+    } else {
+      console.warn(`n8n webhook returned status ${prodRes.status}. Activating TripWise backup AI engine.`);
     }
-
-    // 2. If production webhook returns 404, check test webhook in case canvas test execution is active
-    if (prodRes.status === 404) {
-      try {
-        const testRes = await fetch(N8N_TEST_WEBHOOK, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (testRes.ok) {
-          const contentType = testRes.headers.get('content-type') || '';
-          const testData = contentType.includes('application/json')
-            ? await testRes.json()
-            : await testRes.text();
-          const reply = extractN8nText(testData);
-          if (reply) {
-            return res.json({ reply, success: true });
-          }
-        }
-      } catch (testErr) {
-        console.warn('Test webhook fallback check failed:', testErr);
-      }
-
-      return res.json({
-        reply: "Your n8n AI Agent is connected, but the webhook is waiting for execution. In n8n, please switch the workflow toggle to 'Active' in the top-right corner (or click 'Execute workflow' on the canvas), then send your message again!",
-        success: false,
-      });
-    }
-
-    return res.json({
-      reply: "The n8n AI Agent returned an unexpected response. Please check your n8n workflow nodes and try again.",
-      success: false,
-    });
-  } catch (error) {
-    console.error('Error forwarding to n8n webhook:', error);
-    return res.json({
-      reply: "I'm having trouble connecting to the n8n AI Agent right now. Please verify your n8n workflow is running or click 'Execute workflow' in the n8n editor, then try again!",
-      success: false,
-    });
+  } catch (error: any) {
+    console.warn('n8n webhook call failed or timed out:', error?.message || error);
   }
+
+  // Tier 2: Local Gemini Engine Backup (gemini-3.1-flash-lite)
+  if (ai) {
+    try {
+      const geminiPrompt = `${augmentedMessage}
+
+Respond as the TripWise AI Concierge, adhering strictly to the operational directives above.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-lite',
+        contents: geminiPrompt,
+      });
+
+      if (response.text && response.text.trim().length > 0) {
+        const verifiedReply = refineAndVerifyAiResponse(response.text, message, profile);
+        recordConversationTurn(profile, 'assistant', verifiedReply);
+        return res.json({ reply: verifiedReply, success: true });
+      }
+    } catch (geminiErr) {
+      console.warn('Backup Gemini AI generation failed (using domain expert fallback):', geminiErr);
+    }
+  }
+
+  // Tier 3: Deterministic Domain Expert Fallback (guaranteed verified response)
+  const fallbackReply = generateDomainFallbackResponse(message, profile);
+  recordConversationTurn(profile, 'assistant', fallbackReply);
+  return res.json({ reply: fallbackReply, success: true });
 });
 
 // 4. AI Conversational Assistant & Itinerary modifier
 app.post('/api/gemini/chat', async (req: Request, res: Response) => {
-  const { message, context } = req.body;
+  const { message, context, sessionId = 'tripwise-user-session' } = req.body;
 
   if (!message) {
     return res.status(400).json({ error: 'Message is required' });
   }
 
-  const fallbackReplies: Record<string, string> = {
-    cheaper: 'To lower accommodation costs in your destination, consider staying in well-connected neighborhoods just outside the main tourist drag. In Rio, Leme and Botafogo offer safe beachfront hotels at 30-40% lower rates than central Copacabana. In Kyoto, look around Karasuma or near Shijo-Omiya Station for modern business hotels with excellent subway access.',
-    food: 'For authentic food without tourist premiums, head where local residents eat! Look for lively municipal markets (like Feira Hippie in Rio or Nishiki Market in Kyoto), family-run botecos or machiya noodle bars, and order daily specials (Prato Feito in Brazil or Teishoku set lunches in Japan).',
-    safety: 'General travel wisdom: Keep valuables in your hotel safe, use registered ride-hailing (like Uber or official airport taxis) after dark, keep your phone in a zipped pocket when walking on busy avenues, and carry only the cash you need for the day.',
-  };
+  const profile = getOrCreateSessionProfile(sessionId, context);
+  updateSessionFromMessage(profile, message);
+  recordConversationTurn(profile, 'user', message);
 
   if (!ai) {
-    let text = "I'm your TripWise AI travel concierge! I can help you customize your day-by-day itinerary, suggest hidden dining gems, compare transportation modes, and ensure you stay right within your budget.";
-    const lower = message.toLowerCase();
-    if (lower.includes('cheap') || lower.includes('hotel') || lower.includes('budget')) {
-      text = fallbackReplies.cheaper;
-    } else if (lower.includes('food') || lower.includes('eat') || lower.includes('restaurant')) {
-      text = fallbackReplies.food;
-    } else if (lower.includes('safe') || lower.includes('crime') || lower.includes('emergency')) {
-      text = fallbackReplies.safety;
-    }
-    return res.json({ reply: text });
+    const fallbackReply = generateDomainFallbackResponse(message, profile);
+    recordConversationTurn(profile, 'assistant', fallbackReply);
+    return res.json({ reply: fallbackReply });
   }
 
   try {
-    const prompt = `You are TripWise AI, a sophisticated, practical, and highly knowledgeable personal travel planner.
-User asks: "${message}"
-
-Current Trip Context:
-- Destination: ${context?.currentDestination || 'Selected Destination'}
-- Budget: ${context?.currency || 'INR'} ${context?.budget || 'Flexible'}
-- Travelers: ${context?.travelers?.groupType || 'Solo'} (${context?.travelers?.total || 1} people)
-- Travel Style: ${context?.travelStyle || 'Balanced'}
-
-Instructions:
-1. Provide a direct, warm, concise, and practically useful response (2-3 short paragraphs maximum).
-2. Never invent fake live booking availability.
-3. If the user asked to replace an itinerary activity or adjust the plan, provide the concrete alternative with times, location, and reason.
-4. Keep the tone helpful, modern, and inspiring.`;
+    const prompt = buildN8nAugmentedMessage(message, profile);
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-3.1-flash-lite',
       contents: prompt,
     });
 
-    return res.json({ reply: response.text });
+    const verified = refineAndVerifyAiResponse(response.text || '', message, profile);
+    recordConversationTurn(profile, 'assistant', verified);
+    return res.json({ reply: verified });
   } catch (err) {
     console.error('Gemini chat error:', err);
-    return res.json({ reply: "I'm right here to help you fine-tune your itinerary or answer any travel questions!" });
+    const fallbackReply = generateDomainFallbackResponse(message, profile);
+    recordConversationTurn(profile, 'assistant', fallbackReply);
+    return res.json({ reply: fallbackReply });
   }
 });
 

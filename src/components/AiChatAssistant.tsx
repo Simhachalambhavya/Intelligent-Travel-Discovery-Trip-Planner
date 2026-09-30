@@ -27,6 +27,16 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
   onToggle,
   initialPrompt,
 }) => {
+  const [sessionId] = useState(() => {
+    const saved = typeof window !== 'undefined' ? window.sessionStorage.getItem('tripwise_chat_session') : null;
+    if (saved) return saved;
+    const newId = `tripwise-session-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem('tripwise_chat_session', newId);
+    }
+    return newId;
+  });
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
@@ -42,9 +52,11 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastSentPromptRef = useRef<string>('');
 
   useEffect(() => {
-    if (initialPrompt && isOpen) {
+    if (initialPrompt && isOpen && lastSentPromptRef.current !== initialPrompt) {
+      lastSentPromptRef.current = initialPrompt;
       handleSendMessage(initialPrompt);
     }
   }, [initialPrompt, isOpen]);
@@ -58,7 +70,7 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
     if (!text.trim() || isLoading) return;
 
     const userMsg: Message = {
-      id: `user-${Date.now()}`,
+      id: `user-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       sender: 'user',
       text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -69,10 +81,16 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
     setIsLoading(true);
 
     try {
-      const { reply } = await sendChatMessageToN8n(text, 'tripwise-user-session');
+      const context = {
+        destination: currentDestination?.name,
+        budget,
+        currency,
+      };
+
+      const { reply } = await sendChatMessageToN8n(text, sessionId, context);
 
       const aiMsg: Message = {
-        id: `ai-${Date.now()}`,
+        id: `ai-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender: 'assistant',
         text: reply || "I'm right here to help you customize your travel plans!",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -82,9 +100,9 @@ export const AiChatAssistant: React.FC<AiChatAssistantProps> = ({
     } catch (err) {
       console.error('n8n Chat error:', err);
       const errorMsg: Message = {
-        id: `ai-${Date.now()}`,
+        id: `ai-err-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender: 'assistant',
-        text: "I'm having trouble connecting to the n8n AI Agent right now. Please verify your n8n workflow is running or click 'Execute workflow' in the n8n editor, then try again!",
+        text: "I'm having trouble connecting to the AI Concierge right now. Please try sending your message again!",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMsg]);

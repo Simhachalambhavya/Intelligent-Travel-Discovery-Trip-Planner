@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Sparkles, Sliders, Calendar, MapPin, Users, Sun, Heart, DollarSign, ArrowRight } from 'lucide-react';
 import { TripPreferences, TravelStyle, GroupType } from '../types/travel';
 import { formatCurrency } from '../utils/currency';
@@ -52,6 +52,12 @@ export const TripFinderModal: React.FC<TripFinderModalProps> = ({
 }) => {
   const [prefs, setPrefs] = useState<TripPreferences>({ ...initialPreferences });
 
+  useEffect(() => {
+    if (isOpen) {
+      setPrefs({ ...initialPreferences });
+    }
+  }, [isOpen, initialPreferences]);
+
   if (!isOpen) return null;
 
   const toggleInterest = (interest: string) => {
@@ -91,7 +97,13 @@ export const TripFinderModal: React.FC<TripFinderModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(prefs);
+    const cleanOrigin = prefs.originCity.trim() || 'Your City';
+    const cleanInterests = prefs.interests.length > 0 ? prefs.interests : ['Culture', 'Food', 'Nature'];
+    onSubmit({
+      ...prefs,
+      originCity: cleanOrigin,
+      interests: cleanInterests,
+    });
   };
 
   return (

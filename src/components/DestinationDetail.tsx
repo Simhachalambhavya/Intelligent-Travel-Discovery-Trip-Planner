@@ -71,6 +71,26 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
     };
   }, [destination]);
 
+  const handleSubTabClick = (tabId: string) => {
+    setActiveSubTab(tabId as any);
+    const targetMap: Record<string, string> = {
+      overview: 'destination-overview',
+      itinerary: 'personalized-itinerary',
+      budget: 'budget-calculator',
+      hotels: 'hotels-section',
+      food: 'dining-section',
+      transport: 'transport-section',
+      'best-time': 'best-time-section',
+    };
+    const targetId = targetMap[tabId];
+    if (targetId) {
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  };
+
   const handleSave = () => {
     onSaveTrip({
       id: `${destination.id}-${Date.now()}`,
@@ -131,7 +151,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveSubTab(tab.id as any)}
+                onClick={() => handleSubTabClick(tab.id)}
                 className={`py-2 transition-colors hover:text-slate-900 ${
                   activeSubTab === tab.id
                     ? 'text-amber-600 font-bold border-b-2 border-amber-600'
@@ -232,7 +252,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
         </section>
 
         {/* Why Visit & Famous For Section */}
-        <section className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-sm">
+        <section id="destination-overview" className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-sm">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-4">
               <span className="text-xs font-bold uppercase tracking-wider text-amber-600 block">
@@ -372,7 +392,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
         </section>
 
         {/* Section: Hotel Search Fitting Your Budget */}
-        <section className="space-y-4">
+        <section id="hotels-section" className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
             <div>
               <span className="text-xs font-bold uppercase tracking-wider text-amber-600 block mb-1">
@@ -586,7 +606,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
         </section>
 
         {/* Section: Restaurants & Culinary Highlights */}
-        <section className="space-y-4">
+        <section id="dining-section" className="space-y-4">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-amber-600 block mb-1">
               Culinary Discovery
@@ -676,7 +696,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
         </section>
 
         {/* Section: Local Transportation & Getting Around */}
-        <section className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-sm space-y-6">
+        <section id="transport-section" className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-sm space-y-6">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-amber-600 block mb-1">
               Local Mobility
@@ -722,7 +742,7 @@ export const DestinationDetail: React.FC<DestinationDetailProps> = ({
         </section>
 
         {/* Section: Month-by-Month Best Time to Visit */}
-        <section className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-sm space-y-6">
+        <section id="best-time-section" className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-sm space-y-6">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-amber-600 block mb-1">
               Seasonality & Climate

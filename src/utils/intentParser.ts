@@ -11,7 +11,7 @@ export function parsePromptClientFallback(text: string, currentDefaults?: Partia
   else if (text.includes('₹') || text.toLowerCase().includes('inr') || text.toLowerCase().includes('rupee')) currency = 'INR';
 
   // Budget detection
-  const budgetMatch = text.match(/(?:₹|\$|€|£|rs\.?|inr|usd)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]+)?|\d+)\s*(k|lakh|lakhs|thousand)?/i);
+  const budgetMatch = text.match(/(?:₹|\$|€|£|rs\.?|inr|usd)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(k|lakh|lakhs|thousand)?/i);
   if (budgetMatch) {
     let num = parseFloat(budgetMatch[1].replace(/,/g, ''));
     const unit = (budgetMatch[2] || '').toLowerCase();

@@ -33,8 +33,7 @@ export const DestinationCard: React.FC<DestinationCardProps> = ({
           referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700 ease-out"
           onError={(e) => {
-            // Styled graceful CSS fallback
-            e.currentTarget.style.display = 'none';
+            e.currentTarget.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1200&q=80';
           }}
         />
         {/* Measured Scrim */}
